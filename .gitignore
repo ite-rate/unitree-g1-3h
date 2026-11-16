@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+out/
+config/cyclonedds.xml
+config/cyclonedds.env
+config/local_paths.env
+.DS_Store

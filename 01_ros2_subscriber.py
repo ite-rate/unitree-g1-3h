@@ -61,6 +61,7 @@ class G1LowStateWatcher(Node):
         temps = [t for t in temps if t > 0]
         temp_text = f"{min(temps)}~{max(temps)} C" if temps else "全 0（待机？）"
 
+        # yaw 来自躯干里的 IMU，温度来自每个电机里的温度传感器（见 00_probe.py 的分组）。
         self.get_logger().info(
             f"累计 {self.count} 条 | 最近 {rate:.0f} Hz | "
             f"mode_machine {m.mode_machine} | yaw {m.imu_state.rpy[2]:+.2f} rad | "

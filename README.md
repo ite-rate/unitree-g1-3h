@@ -21,10 +21,35 @@
 4. 自己解析一帧 `LowState`，读出 29 个关节的角度、速度、力矩、温度；
 5. 知道 DDS、网卡、domain、QoS、FSM 这些词在真机上分别对应什么故障。
 
+## 先建立一个概念：数据从哪来
+
+机器人身上所有"读出来的数"，都来自某个传感器。G1 把下面这几类传感器的读数打包成一条消息
+`LowState`，每秒发约 500 次。收到一帧，就是拿到这些传感器在同一时刻的一张快照。
+
+| 传感器 | 装在哪 | 测什么 | 在 `LowState` 里叫 | 本课在哪看 |
+|---|---|---|---|---|
+| IMU | 躯干里 | 姿态、角速度、加速度 | `imu_state.rpy` / `gyroscope` / `accelerometer` | `00`、`01` |
+| 编码器 | 每个关节电机 | 关节角、角速度 | `motor_state[i].q` / `dq` | `00`、`05` |
+| 电机电流 | 每个关节电机 | 推算出的力矩（估计值） | `motor_state[i].tau_est` | `00`、`05` |
+| 温度传感器 | 每个关节电机 | 电机温度 | `motor_state[i].temperature` | `00`、`05` |
+| 遥控器 | 手里 | 按键、摇杆 | `wireless_remote` | `00` |
+
+上面这些测的都是机器人**自己**。G1 头部还有两个测**周围环境**的传感器，数据不在 `LowState` 里：
+
+| 传感器 | 装在哪 | 测什么 | 数据从哪拿 | 本课在哪看 |
+|---|---|---|---|---|
+| 激光雷达 Livox MID-360S | 头部 | 周围一圈物体的距离（点云，约 10 Hz） | 雷达是独立网络设备，**先在笔记本上启动 Livox 驱动**，再订阅 `/livox/lidar` | `08_lidar.py`，前置条件见 [docs/lidar_setup.md](docs/lidar_setup.md) |
+| 深度相机 RealSense D435i | 头部 | 彩色图 + 每个像素的距离 | USB 接在机器人的开发计算单元上，**要 ssh 到那台电脑上运行** | `09_depth_camera.py` |
+
+电池走单独的 BMS 消息，本课不展开。
+
+`00_probe.py` 会把收到的一帧按传感器分组打印；`05` 细看每个关节；`06` 看这些数据多久来一次；
+`08`、`09` 看头部的两个环境传感器。
+
 ## 仓库结构
 
 ```
-00_probe.py ... 07_demo_show.py   8 个 G1 脚本，可单独运行
+00_probe.py ... 09_depth_camera.py  10 个 G1 脚本，可单独运行（08/09 是头部传感器）
 go2/                              Go2 附加章节（原 8 个脚本，逻辑未改）
 unitree_sdk2py/                   官方 SDK 完整副本（只加注释；运行时用的就是它）
 ros2_nodes/                       unitree_ros2 的节点源码（Go2 + G1，阅读用，不参与编译）
@@ -32,6 +57,7 @@ scripts/install.sh                全新 Ubuntu 22.04 一键装环境
 scripts/env.sh                    每开一个终端 source 一次
 scripts/connect.py                选网卡、生成 DDS 配置、确认收到 /lowstate
 docs/ros2_minimal.html            rclpy / Node / Topic 图解页（单文件，离线可开）
+docs/lidar_setup.md               激光雷达前置条件：编译 Livox SDK 与驱动、改 IP、启动
 docs/sdk_reading_map.md           课程脚本 → 源码文件 的跳转地图
 docs/real_robot_checklist.md      上课前逐项打勾的真机核对表
 LICENSES/ · THIRD_PARTY_NOTICES.md 第三方源码来源、固定版本与许可证
@@ -91,6 +117,9 @@ python3 00_probe.py
 | 02:50–03:00 | 10 | 作业与源码阅读路线 | `docs/sdk_reading_map.md` |
 
 只有 2 小时：砍掉第 6 节，把 `06_rate_table.py` 留成课后作业。
+
+头部传感器（`08_lidar.py`、`09_depth_camera.py`）：时间够就接在第 5 节关节后面演示，各约 10 分钟；
+不够就留作课后。
 
 ---
 
@@ -362,6 +391,41 @@ python3 05_joint_monitor.py --csv out/joints.csv --seconds 60
 
 ---
 
+## 5+. 头部传感器：激光雷达与深度相机（可选，各 10 分钟）
+
+前面的传感器测的都是机器人自己（姿态、关节、温度），这两个测的是周围的环境。
+
+**激光雷达（MID-360S）**：和 LowState 不一样，雷达是一台独立的网络设备，
+**要先有驱动把它的数据发成 topic**，脚本才有东西可读。课前按 [docs/lidar_setup.md](docs/lidar_setup.md)
+编译一次 Livox-SDK2 和 livox_ros_driver2、改好 IP，上课时：
+
+```bash
+# 终端 A：启动雷达驱动（会同时打开 RViz，可以直接给学生看点云）
+source scripts/env.sh
+source ~/ws_livox/install/setup.bash
+ros2 launch livox_ros_driver2 rviz_MID360s_launch.py
+
+# 终端 B：确认有数据，再跑课程脚本
+ros2 topic hz /livox/lidar
+python3 08_lidar.py --seconds 20
+```
+
+每秒一行：点数、最近距离、远近比例。拿一块纸板靠近机器人头部，看"最近距离"变小。
+这里能顺便讲清一件事：**传感器 → 驱动 → topic → 你的程序**，驱动不起来，传感器再好也读不到。
+
+**深度相机**：相机用 USB 插在机器人的开发计算单元上，不走 DDS 网络，所以要到那台电脑上运行：
+
+```bash
+scp 09_depth_camera.py <用户名>@<开发计算单元 IP>:~/     # 地址以现场标注为准
+ssh <用户名>@<开发计算单元 IP>
+python3 09_depth_camera.py
+```
+
+打印实际帧率和画面中心的距离，并保存一张彩色图。手在镜头前前后移动，看距离跟着变。
+这里正好讲清一件事：**不是所有传感器的数据都在网络上**，接在哪台电脑上，就要在哪台电脑上读。
+
+---
+
 ## 6. 频率、抖动（20 分钟）
 
 ```bash
@@ -395,8 +459,8 @@ ros2 topic info /lowstate -v
 2. 队列太长，积压；
 3. 终端和机器人不在同一网段，丢包重传。
 
-> G1 的 Python SDK 没有 Go2 那样的 `VideoClient` / 点云开关。雷达和相机走机器人自带的
-> ROS 2 话题，本课不展开；想学感知，去配套的 `unitree-robotics-lab`。
+> G1 的 Python SDK 没有 Go2 那样的 `VideoClient` / 点云开关。雷达和相机见上面的 5+ 节；
+> 建图、导航等进一步的感知内容，去配套的 `unitree-robotics-lab`。
 
 ---
 
@@ -455,7 +519,8 @@ python3 07_demo_show.py --yes
 | 手臂动作 | `G1ArmActionClient` | `rt/api/arm/request` | 16 个预置动作 |
 | 语音 / 灯 | `AudioClient` | `rt/api/voice/request` | TTS、音量、RGB、wav |
 | 低层电机 | `LowCmd_` | `rt/lowcmd` | 本课不涉及，见配套 lab 课程 |
-| 雷达 / 相机 | — | 机器人自带的 ROS 2 话题 | Python SDK 无对应 client |
+| 激光雷达 | Livox 驱动 + `ChannelSubscriber` + `PointCloud2_` | `rt/livox/lidar` | 要先启动 livox_ros_driver2，见 `docs/lidar_setup.md` |
+| 深度相机 | `pyrealsense2` | —（USB，不走网络） | 在开发计算单元上运行 `09_depth_camera.py` |
 
 > G1 的 `LowState` **没有电池字段**（Go2 才有 `bms_state`、`power_v`）。电量看 App。
 

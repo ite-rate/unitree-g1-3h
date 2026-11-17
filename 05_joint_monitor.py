@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """05 G1 关节监视：把 /lowstate 里的 29 个关节读成人话。
 
-一帧 LowState 里最重要的是 motor_state[35]：
-    q        关节角（rad）
-    dq       关节角速度（rad/s）
-    tau_est  估计力矩（N·m）
-    temperature[2]  两路温度（C）
-    vol      母线电压（V）
+00 里看到了 LowState 是好几类传感器的快照；这一节只看其中"每个电机身上"的那几类。
+G1 的每个关节都是一个电机，每个电机自带几样传感器，读数都放在 motor_state[i] 里：
+
+    字段             单位    来自哪个传感器
+    q                rad     编码器：关节转到了哪个角度
+    dq               rad/s   编码器：转得多快（角度随时间的变化）
+    tau_est          N·m     电机电流推算的力矩（估计值，不是力矩传感器直接测的）
+    temperature[2]   C       电机里的温度传感器，两路
+    vol              V       电机供电电压
+
+课堂演示：让学生轻轻抬一下 G1 的手臂，看对应关节的 q 跟着变；
+          手放开后看 dq 回到 0。传感器 -> 数字，这就是"感知"最原始的样子。
 
 G1 的关节顺序（29 DOF 机型）：
     0–11    两条腿
@@ -82,7 +88,7 @@ def resolve_joint(text: str):
 def print_sample(msg, selected, csv_file):
     now = time.time()
     for i in selected:
-        m = msg.motor_state[i]
+        m = msg.motor_state[i]  # 第 i 个电机：编码器 + 电流 + 温度传感器的读数
         name = NAME_BY_INDEX[i]
         temp = m.temperature[0]
         line = f"{i:>2} {name:<16} q={m.q:+7.3f} dq={m.dq:+7.3f} tau={m.tau_est:+6.2f} T={temp:>3d}C"

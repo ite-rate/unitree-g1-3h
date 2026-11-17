@@ -1,13 +1,25 @@
 #!/usr/bin/env python3
-"""00 连接自检：我能不能"听见"G1？
+"""00 连接自检：G1 身上的传感器，数据能不能到我的电脑？
 
-整节课最短的一步：只订阅 /lowstate，数一数 3 秒能收到多少条。
-收到数据，后面的运控、手臂、语音、关节才有意义。
+先建立一个概念：机器人身上所有"读出来的数"，都来自某个传感器。
+G1 把好几类传感器的读数，打包成一条消息 LowState，每秒发约 500 次。
+所以每收到一帧，就等于拿到了这些传感器在同一时刻的一张快照：
 
-G1 和 Go2 最大的区别在消息类型：
-    Go2 -> unitree_go.msg.LowState   （12 个电机，带电池）
-    G1  -> unitree_hg.msg.LowState   （35 个电机槽位，不带电池）
-本文件用的是 unitree_hg，这是 G1 的官方 IDL。
+    传感器                 测什么                      在 LowState 里叫
+    IMU（躯干里）          姿态、角速度、加速度          imu_state
+    关节编码器（每个电机）  关节角度、角速度              motor_state[i].q / dq
+    电机电流（每个电机）    推算出来的力矩                motor_state[i].tau_est
+    温度传感器（每个电机）  电机温度                      motor_state[i].temperature
+    遥控器                 按键、摇杆                    wireless_remote
+
+G1 头部还有两个"看环境"的传感器，数据不在 LowState 里，单独看：
+    激光雷达 MID-360S      周围一圈物体的距离（点云）    08_lidar.py（要先启动雷达驱动）
+    深度相机 D435i         彩色图 + 每个像素的距离       09_depth_camera.py
+上面五类测的都是机器人"自己"，这两个测的是"周围的环境"。电池走单独的 BMS 消息，本课不展开。
+
+本脚本做两件事：
+    1. 数 3 秒收到几条：收不到，后面都免谈；
+    2. 收到了，就按"传感器"分组，把最后一帧打印出来。
 
 用法:
     python3 00_probe.py
@@ -15,22 +27,66 @@ G1 和 Go2 最大的区别在消息类型：
     python3 00_probe.py --seconds 5
 
 这里没有任何课程封装：ChannelFactoryInitialize / ChannelSubscriber 就是
-unitree_sdk2py 官方示例里的写法。
+unitree_sdk2py 官方示例里的写法。G1 用 unitree_hg 消息，Go2 用 unitree_go，不能混。
 """
 import argparse
+import math
+import struct
 import time
 
 from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelSubscriber
 from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_
 
 # G1 29 DOF 机型：0–28 是有效关节，29–34 是消息里预留的槽位。
-# 23 DOF 机型只有其中一部分；所以下面统一只统计 temperature > 0 的槽位。
 G1_MOTOR_COUNT = 29
-LEG_JOINTS = 12
+LEG_JOINTS = range(12)  # 0–11 是两条腿
+
+
+def print_by_sensor(msg):
+    """把一帧 LowState 按传感器分组打印。每一组对应机器人身上一类真实的传感器。"""
+    motors = [msg.motor_state[i] for i in range(G1_MOTOR_COUNT)]
+
+    # ① IMU：装在躯干里，测的是"身体"的运动，不是某个关节的。
+    imu = msg.imu_state
+    r, p, y = imu.rpy
+    gx, gy, gz = imu.gyroscope
+    acc = math.sqrt(sum(a * a for a in imu.accelerometer))
+    print("① IMU（躯干里的惯性测量单元）")
+    print(f"     姿态 roll/pitch/yaw   {r:+.3f} / {p:+.3f} / {y:+.3f} rad")
+    print(f"     角速度（陀螺仪）      {gx:+.3f} / {gy:+.3f} / {gz:+.3f} rad/s")
+    print(f"     加速度大小（加速度计） {acc:.2f} m/s²   静止时约 9.8，测到的就是重力")
+
+    # ② 关节编码器：每个电机上一个，测这个关节转到了多少度、转得多快。
+    legs = [motors[i].q for i in LEG_JOINTS]
+    print("② 关节编码器（每个电机一个）")
+    print(f"     腿部 12 个关节角 q    {min(legs):+.3f} ~ {max(legs):+.3f} rad")
+    print("     每个关节的细节，见 05_joint_monitor.py")
+
+    # ③ 力矩：tau_est 不是力矩传感器直接测的，是由电机电流推算出来的估计值。
+    i_max = max(range(G1_MOTOR_COUNT), key=lambda i: abs(motors[i].tau_est))
+    print("③ 电机电流 -> 估计力矩")
+    print(f"     最大 |tau_est|        {abs(motors[i_max].tau_est):.2f} N·m（{i_max} 号电机）")
+
+    # ④ 温度：每个电机两路，课堂只看第 0 路。全是 0 通常说明电机没上电。
+    temps = [m.temperature[0] for m in motors if m.temperature[0] > 0]
+    print("④ 电机温度传感器")
+    if temps:
+        print(f"     {len(temps)} 个电机        {min(temps)} ~ {max(temps)} C")
+    else:
+        print("     全是 0：先确认机器人已上电，且不是低功耗待机")
+
+    # ⑤ 遥控器：40 字节原始数据，按键和摇杆都在里面（解析方法见 utils/joystick.py）。
+    raw = bytes(msg.wireless_remote)
+    lx = struct.unpack("f", raw[4:8])[0]
+    ly = struct.unpack("f", raw[20:24])[0]
+    print("⑤ 遥控器")
+    print(f"     左摇杆 lx / ly        {lx:+.2f} / {ly:+.2f}   遥控器没连时为 0")
+
+    print(f"\n   tick = {msg.tick}（上电后的计数，每帧都在涨，说明数据是新的）")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="订阅 rt/lowstate，确认 G1 的 DDS 链路")
+    parser = argparse.ArgumentParser(description="订阅 rt/lowstate，确认 G1 的传感器数据能收到")
     parser.add_argument("--iface", help="连机器人的网卡名，如 eth0；不填则用环境变量 CYCLONEDDS_URI")
     parser.add_argument("--seconds", type=float, default=3.0, help="观察多久（秒）")
     args = parser.parse_args()
@@ -43,7 +99,7 @@ def main():
 
     box = {"count": 0, "last": None}
 
-    # 回调在 DDS 自己的线程里执行，这里只做最轻的计数和保存。
+    # 回调只做最轻的事：计数，保存最新一帧。解析和打印放到最后，在主线程里做。
     def on_lowstate(msg: LowState_):
         box["count"] += 1
         box["last"] = msg
@@ -64,23 +120,13 @@ def main():
         print("  5. 你连的到底是 G1 吗？G1 用 unitree_hg，Go2 用 unitree_go，消息类型不能混。")
         return
 
-    rpy = msg.imu_state.rpy
-    # temperature 是 int16[2]：两个绕组/传感器的温度，课堂只看第 0 个。
-    temps = [msg.motor_state[i].temperature[0] for i in range(G1_MOTOR_COUNT)]
-    temps = [t for t in temps if t > 0]
-    legs = [msg.motor_state[i].q for i in range(LEG_JOINTS)]
+    print(f"\n[通过] 收到 {count} 条，约 {count / args.seconds:.0f} Hz")
+    print(f"机型 mode_machine = {msg.mode_machine}，踝关节 mode_pr = {msg.mode_pr}（0=PR 串联 1=AB 并联）\n")
+    print("最后一帧，按传感器分组：")
+    print_by_sensor(msg)
 
-    print("\n[通过] DDS 链路正常")
-    print(f"  收到 {count} 条，约 {count / args.seconds:.0f} Hz")
-    print(f"  mode_machine = {msg.mode_machine}（机型/自由度编号）  mode_pr = {msg.mode_pr}（0=PR 串联 1=AB 并联）")
-    print(f"  tick = {msg.tick}（机器人上电后的控制计数）")
-    print(f"  姿态 roll/pitch/yaw = {rpy[0]:+.3f} / {rpy[1]:+.3f} / {rpy[2]:+.3f} rad")
-    print(f"  腿部 12 个关节 q = {min(legs):+.3f} ~ {max(legs):+.3f} rad")
-    if temps:
-        print(f"  {len(temps)} 个电机温度 {min(temps)}~{max(temps)} C")
-    else:
-        print("  电机温度全是 0：先确认机器人已上电、且不是低功耗待机状态")
-    print("\n注意：G1 的 LowState 里没有电池字段（Go2 才有 bms_state），电量看 App。")
+    print("\n电池不在 LowState 里（Go2 才把电池放在 LowState），电量看 App。")
+    print("头部的激光雷达和深度相机也不在这里：见 08_lidar.py、09_depth_camera.py。")
     print("下一步: ros2 topic list，看看同一个 /lowstate 在 ROS 2 里长什么样。")
 
 

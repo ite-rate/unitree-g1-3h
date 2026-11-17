@@ -36,6 +36,7 @@ def stage(text):
 
 
 def read_status(seconds=2.0):
+    """先读一次传感器（IMU 姿态、电机温度），确认机器人状态正常，再开始发动作。"""
     box = {"msg": None}
     sub = ChannelSubscriber("rt/lowstate", LowState_)
     sub.Init(lambda m: box.__setitem__("msg", m), 10)

@@ -50,7 +50,8 @@
 
 ```
 00_probe.py ... 09_depth_camera.py  10 个 G1 脚本，可单独运行（08/09 是头部传感器）
-go2/                              Go2 附加章节（原 8 个脚本，逻辑未改）
+02b_high_level_move.py            G1 高层控制：速度指令 / 断流实验 / 闭环到点
+go2/                              Go2 附加章节（原 8 个脚本 + 自己的 02b 高层控制，互不共用）
 unitree_sdk2py/                   官方 SDK 完整副本（只加注释；运行时用的就是它）
 ros2_nodes/                       unitree_ros2 的节点源码（Go2 + G1，阅读用，不参与编译）
 scripts/install.sh                全新 Ubuntu 22.04 一键装环境
@@ -58,6 +59,7 @@ scripts/env.sh                    每开一个终端 source 一次
 scripts/connect.py                选网卡、生成 DDS 配置、确认收到 /lowstate
 docs/ros2_minimal.html            rclpy / Node / Topic 图解页（单文件，离线可开）
 docs/lidar_setup.md               激光雷达前置条件：编译 Livox SDK 与驱动、改 IP、启动
+docs/high_level_control.md        G1 高层控制讲解：三层栈、duration、坐标系、闭环 MoveTo
 docs/sdk_reading_map.md           课程脚本 → 源码文件 的跳转地图
 docs/real_robot_checklist.md      上课前逐项打勾的真机核对表
 LICENSES/ · THIRD_PARTY_NOTICES.md 第三方源码来源、固定版本与许可证
@@ -109,14 +111,17 @@ python3 00_probe.py
 | 00:00–00:10 | 10 | 连接自检 | `00_probe.py` |
 | 00:10–00:35 | 25 | ROS 2 最小模型：Node / Topic / Message / QoS | [图解页](docs/ros2_minimal.html)、`01_ros2_subscriber.py` |
 | 00:35–01:00 | 25 | G1 运控 FSM：站、蹲、坐、走、挥手 | `02_loco.py` |
-| 01:00–01:20 | 20 | 手臂 16 个预置动作 | `03_arm_actions.py` |
-| 01:20–01:40 | 20 | 语音 TTS、音量、RGB 灯带、播放 wav | `04_audio_led.py` |
-| 01:40–02:10 | 30 | 29 个关节：角度、速度、力矩、温度 | `05_joint_monitor.py` |
-| 02:10–02:30 | 20 | `/lowstate` 与 `/lf/lowstate` 的频率、抖动 | `06_rate_table.py`、`ros2 topic hz` |
-| 02:30–02:50 | 20 | 串成 30 秒演示 | `07_demo_show.py` |
-| 02:50–03:00 | 10 | 作业与源码阅读路线 | `docs/sdk_reading_map.md` |
+| 01:00–01:20 | 20 | **高层控制：给速度、断流实验、闭环到点** | `02b_high_level_move.py`、[讲解](docs/high_level_control.md) |
+| 01:20–01:40 | 20 | 手臂 16 个预置动作 | `03_arm_actions.py` |
+| 01:40–01:50 | 10 | 语音 TTS、音量、RGB 灯带、播放 wav | `04_audio_led.py` |
+| 01:50–02:20 | 30 | 29 个关节：角度、速度、力矩、温度 | `05_joint_monitor.py` |
+| 02:20–02:40 | 20 | `/lowstate` 与 `/lf/lowstate` 的频率、抖动 | `06_rate_table.py`、`ros2 topic hz` |
+| 02:40–02:55 | 15 | 串成 30 秒演示 | `07_demo_show.py` |
+| 02:55–03:00 | 5 | 作业与源码阅读路线 | `docs/sdk_reading_map.md` |
 
 只有 2 小时：砍掉第 6 节，把 `06_rate_table.py` 留成课后作业。
+时间紧时第 4 节（语音与灯）可以压到 5 分钟，高层控制那 20 分钟别砍——它是唯一一节
+把「指令 → 机器人真的动起来 → 读到反馈」闭环讲完的内容。
 
 头部传感器（`08_lidar.py`、`09_depth_camera.py`）：时间够就接在第 5 节关节后面演示，各约 10 分钟；
 不够就留作课后。
@@ -280,6 +285,85 @@ code = client.Damp()      # code 是 None，不是 0
 | 7303 | Task ID 非法（挥手 / 握手参数不对） |
 
 非 0 时先做 `damp`，确认机器人站立、没被 App 或遥控器接管，再重试。
+
+---
+
+## 2+. 高层控制：让它真的走起来（20 分钟）
+
+上一节只讲到"站着、蹲着、坐着"。这一节才是**运动**：给它一个速度，它往那个方向走。
+
+完整讲解在 [docs/high_level_control.md](docs/high_level_control.md)（G1）和
+[go2/high_level_control.md](go2/high_level_control.md)（Go2）。这里只留能直接跑的东西。
+
+**两台机器是两个独立脚本，不共用一个开关：**
+
+| | G1 | Go2 |
+|---|---|---|
+| 脚本 | `02b_high_level_move.py` | `go2/02b_high_level_move.py` |
+| 类 | `LocoClient` | `SportClient` |
+| 方法 | `SetVelocity(vx, vy, wz, duration)`（7105） | `Move(vx, vy, vyaw)`（1008） |
+| 前置 | `SetFsmId(500)` | `BalanceStand()` |
+
+一句话记住三件事：
+
+- 低层给力矩，中层给步态，**高层只给三个数：`vx`（前后 m/s）、`vy`（左移 m/s）、`wz`（转向 rad/s）**；
+- 这三个数在**机体坐标系**里，不是世界坐标系；
+- **SDK 只给速度，不给坐标。** "去 (1.0, 0.5) 那个点"要自己闭环，约 20 行代码。
+
+### 先看反馈，再动手
+
+```bash
+python3 02b_high_level_move.py --action probe
+```
+
+打印 `rt/sportmodestate`：运控里程计的 `position`、机体速度 `velocity`、`yaw`、步态编号。
+G1 和 Go2 是同一条 DDS 话题、同一个 `unitree_go/SportModeState` 类型
+（注意 G1 的 `LowState` 才是 `unitree_hg`，别混）。
+
+### 发一条速度
+
+```bash
+python3 02b_high_level_move.py --action twist --vx 0.2 --duration 2
+python3 02b_high_level_move.py --action circle --vx 0.2 --wz 0.3 --duration 4
+```
+
+脚本按 20 Hz 重发，同时把"指令值 / 实测值"并排打出来 —— 对不上就是没在执行。
+
+### 断流实验（这一节最值钱的两分钟）
+
+```bash
+python3 02b_high_level_move.py --action dropout --vx 0.2 --duration 3
+```
+
+只发**一条** `SetVelocity(..., duration=3)`，然后 3 秒一条都不发 → 它会把这三秒走完。
+
+这就是 G1 的设计：`duration` 是**预授权时长**，不是"心跳"。断流不等于停。
+Go2 正好相反 —— `Move()` 没有 duration，断流几百毫秒固件自己停。
+把狗那台也叫过来跑一次 `go2/02b_high_level_move.py --action dropout`，两分钟讲完，学生忘不掉。
+
+### 闭环到一个坐标（SDK 里没有这个接口，自己写）
+
+```bash
+python3 02b_high_level_move.py --action goto --x 1.0 --y 0.5 --timeout 20
+```
+
+核心是"世界系误差 → 机体系误差"那一行旋转，少写它机器人会绕你画弧：
+
+```python
+ex, ey = gx - x, gy - y
+c, s = math.cos(yaw), math.sin(yaw)
+ex_b, ey_b = c * ex + s * ey, -s * ex + c * ey   # ★ 少了这行就转圈
+vx, wz = kp * ex_b, kyaw * math.atan2(ey_b, ex_b)
+```
+
+三个必须加的工程保护，脚本里都有：方向偏差 > 0.6 rad 先原地转；到点死区 0.1 m；
+超时或反馈断流立刻停车。
+
+### 三个坑
+
+1. **坐标系混用** —— 上面那行旋转。现象：绕着你画弧，永远到不了。
+2. **里程计漂移** —— `position` 是步态里程计，原地转四圈回不到原点。真机演示控制在 1~2 米内。
+3. **控制权被抢** —— App / 遥控器 / 另一个脚本，谁最后发谁说了算。现象：指令发了它不动，或自己在走。
 
 ---
 

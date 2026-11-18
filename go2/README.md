@@ -7,8 +7,11 @@
 - 同一个 RPC 套路，Go2 是 `SportClient`，G1 是 `LocoClient` / `G1ArmActionClient`；
 - Go2 有激光雷达和前置相机，G1 的 Python SDK 没有对应 client。
 
-8 个脚本**逻辑一行没改**，只在文件头补了 3 行 `sys.path` 引导，保证从 `go2/` 目录直接运行
+原 8 个脚本**逻辑一行没改**，只在文件头补了 3 行 `sys.path` 引导，保证从 `go2/` 目录直接运行
 也能 import 到仓库根目录的 `unitree_sdk2py`。
+
+另外新加了一个 `02b_high_level_move.py`（高层控制）。它和 G1 的 `02b` **是两个独立脚本**，
+各用各的类（`SportClient` vs `LocoClient`），不共用一个 `--robot` 开关。
 
 ## 运行方式
 
@@ -25,6 +28,7 @@ source scripts/env.sh
 python3 go2/00_probe.py
 python3 go2/01_ros2_subscriber.py
 python3 go2/02_actions.py --list
+python3 go2/02b_high_level_move.py --action probe   # 高层控制，见下文
 python3 go2/03_light_volume.py --get
 python3 go2/04_lidar.py --seconds 10
 python3 go2/05_camera.py
@@ -51,6 +55,29 @@ python3 00_probe.py
 | 02:05–02:35 | 30 | 前置摄像头：JPEG 字节流 | `05_camera.py` |
 | 02:35–02:55 | 20 | topic 频率、抖动、带宽 | `06_rate_table.py` |
 | 02:55–03:00 | 5 | 串起来 + 作业 | `07_demo_show.py` |
+
+想在 Go2 上加高层控制：把上面的 35 分钟预设动作压到 25 分钟，中间插 20 分钟跑
+`go2/02b_high_level_move.py`（讲解见 [high_level_control.md](high_level_control.md)）。
+
+## 高层控制（Go2 自己的脚本）
+
+```bash
+python3 go2/02b_high_level_move.py --action probe
+python3 go2/02b_high_level_move.py --action twist --vx 0.3 --duration 2
+python3 go2/02b_high_level_move.py --action dropout      # 走一会儿 → 闭嘴 1.5 s，看它自己停
+python3 go2/02b_high_level_move.py --action circle --vx 0.2 --wz 0.3 --duration 4
+python3 go2/02b_high_level_move.py --action goto --x 1.0 --y 0.5
+```
+
+和第 2 节预设动作的区别：那一节是"一个 API 一个技能"，这一节是自己连续控速。
+
+三个和 G1 完全不同的点（讲解见 [high_level_control.md](high_level_control.md)）：
+
+- `Move()` 是 `_CallNoReply`，**没有回执**，返回值永远是 0，别拿它判断成败；
+- `Move()` **没有 duration**，想连续走必须自己按 20 Hz 重发；
+- 断流之后几百毫秒固件自己停 —— 所以高层控制是一条**数据流**，不是一次函数调用。
+
+G1 反过来：`SetVelocity(..., duration)` 带预授权时长，断流了它会把这段走完。
 
 ## Go2 预设动作（`SportClient`）
 

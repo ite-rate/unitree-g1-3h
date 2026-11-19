@@ -84,6 +84,17 @@ ros2 launch livox_ros_driver2 rviz_MID360s_launch.py
 
 先 `source scripts/env.sh` 是为了让驱动也用 CycloneDDS、domain 0，和 `08_lidar.py` 在同一个 DDS 网络里。
 
+## 4+. RViz 里怎么看
+
+`rviz_MID360s_launch.py` 一跑就会自动弹出 RViz 窗口，里面就是实时点云：
+
+- 拖动 = 旋转视角，滚轮 = 缩放；
+- 左侧 Displays 面板的 `PointCloud2` 是点云开关，`Size` 改到 3 左右看得更清楚；
+- 走到机器人面前挥挥手，点云里能看到自己。
+
+没有任何点、但 `ros2 topic hz` 有数：看 RViz 左上角 Fixed Frame 是否等于
+点云的 frame（默认 `livox_frame`），不一致就改成一样的。
+
 ## 5. 验证，再跑课程脚本
 
 ```bash

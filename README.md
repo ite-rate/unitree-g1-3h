@@ -19,7 +19,8 @@
 2. 用 `LocoClient` 切运控状态机：站、蹲、坐、走、挥手；
 3. 用 `G1ArmActionClient` 做 16 个手臂动作，用 `AudioClient` 做 TTS、音量、RGB 灯带；
 4. 自己解析一帧 `LowState`，读出 29 个关节的角度、速度、力矩、温度；
-5. 知道 DDS、网卡、domain、QoS、FSM 这些词在真机上分别对应什么故障。
+5. 知道 DDS、网卡、domain、QoS、FSM 这些词在真机上分别对应什么故障；
+6. 用官方工具看传感器画面：RViz 看雷达点云，`realsense-viewer` 看相机实时画面。
 
 ## 先建立一个概念：数据从哪来
 
@@ -32,24 +33,24 @@
 | 编码器 | 每个关节电机 | 关节角、角速度 | `motor_state[i].q` / `dq` | `00`、`05` |
 | 电机电流 | 每个关节电机 | 推算出的力矩（估计值） | `motor_state[i].tau_est` | `00`、`05` |
 | 温度传感器 | 每个关节电机 | 电机温度 | `motor_state[i].temperature` | `00`、`05` |
-| 遥控器 | 手里 | 按键、摇杆 | `wireless_remote` | `00` |
+| 遥控器 | 手里 | 按键、摇杆 | `wireless_remote` | 40 字节原始数据，本课不解析 |
 
 上面这些测的都是机器人**自己**。G1 头部还有两个测**周围环境**的传感器，数据不在 `LowState` 里：
 
 | 传感器 | 装在哪 | 测什么 | 数据从哪拿 | 本课在哪看 |
 |---|---|---|---|---|
-| 激光雷达 Livox MID-360S | 头部 | 周围一圈物体的距离（点云，约 10 Hz） | 雷达是独立网络设备，**先在笔记本上启动 Livox 驱动**，再订阅 `/livox/lidar` | `08_lidar.py`，前置条件见 [docs/lidar_setup.md](docs/lidar_setup.md) |
-| 深度相机 RealSense D435i | 头部 | 彩色图 + 每个像素的距离 | USB 接在机器人的开发计算单元上，**要 ssh 到那台电脑上运行** | `09_depth_camera.py` |
+| 激光雷达 Livox MID-360S | 头部 | 周围一圈物体的距离（点云，约 10 Hz） | 雷达是独立网络设备，**先在笔记本上启动 Livox 驱动**，再订阅 `/livox/lidar` | RViz 看点云 + `08_lidar.py` 看数字，前置见 [docs/lidar_setup.md](docs/lidar_setup.md) |
+| 深度相机 RealSense D435i | 头部 | 彩色图 + 每个像素的距离 | USB 接在机器人的开发计算单元上，**要 ssh 到那台电脑上运行** | `realsense-viewer` 看实时画面 + `09_depth_camera.py` 看 SDK 写法 |
 
 电池走单独的 BMS 消息，本课不展开。
 
-`00_probe.py` 会把收到的一帧按传感器分组打印；`05` 细看每个关节；`06` 看这些数据多久来一次；
+`00_probe.py` 会把收到的一帧摘要打印；`05` 细看每个关节；`06` 看这些数据多久来一次；
 `08`、`09` 看头部的两个环境传感器。
 
 ## 仓库结构
 
 ```
-00_probe.py ... 09_depth_camera.py  10 个 G1 脚本，可单独运行（08/09 是头部传感器）
+00_probe.py ... 09_depth_camera.py  11 个 G1 脚本，官方示例风格，可单独运行（08/09 是头部传感器）
 02b_high_level_move.py            G1 高层控制：速度指令 / 断流实验 / 闭环到点
 go2/                              Go2 附加章节（原 8 个脚本 + 自己的 02b 高层控制，互不共用）
 unitree_sdk2py/                   官方 SDK 完整副本（只加注释；运行时用的就是它）
@@ -60,8 +61,6 @@ scripts/connect.py                选网卡、生成 DDS 配置、确认收到 /
 docs/ros2_minimal.html            rclpy / Node / Topic 图解页（单文件，离线可开）
 docs/lidar_setup.md               激光雷达前置条件：编译 Livox SDK 与驱动、改 IP、启动
 docs/high_level_control.md        G1 高层控制讲解：三层栈、duration、坐标系、闭环 MoveTo
-docs/sdk_reading_map.md           课程脚本 → 源码文件 的跳转地图
-docs/real_robot_checklist.md      上课前逐项打勾的真机核对表
 LICENSES/ · THIRD_PARTY_NOTICES.md 第三方源码来源、固定版本与许可证
 out/                              运行时生成的 CSV，已 gitignore
 ```
@@ -113,11 +112,11 @@ python3 00_probe.py
 | 00:35–01:00 | 25 | G1 运控 FSM：站、蹲、坐、走、挥手 | `02_loco.py` |
 | 01:00–01:20 | 20 | **高层控制：给速度、断流实验、闭环到点** | `02b_high_level_move.py`、[讲解](docs/high_level_control.md) |
 | 01:20–01:40 | 20 | 手臂 16 个预置动作 | `03_arm_actions.py` |
-| 01:40–01:50 | 10 | 语音 TTS、音量、RGB 灯带、播放 wav | `04_audio_led.py` |
+| 01:40–01:50 | 10 | 语音 TTS、音量、RGB 灯带 | `04_audio_led.py` |
 | 01:50–02:20 | 30 | 29 个关节：角度、速度、力矩、温度 | `05_joint_monitor.py` |
 | 02:20–02:40 | 20 | `/lowstate` 与 `/lf/lowstate` 的频率、抖动 | `06_rate_table.py`、`ros2 topic hz` |
 | 02:40–02:55 | 15 | 串成 30 秒演示 | `07_demo_show.py` |
-| 02:55–03:00 | 5 | 作业与源码阅读路线 | `docs/sdk_reading_map.md` |
+| 02:55–03:00 | 5 | 作业与源码阅读路线 | 本文「作业」与「想钻进去看源码」两节 |
 
 只有 2 小时：砍掉第 6 节，把 `06_rate_table.py` 留成课后作业。
 时间紧时第 4 节（语音与灯）可以压到 5 分钟，高层控制那 20 分钟别砍——它是唯一一节
@@ -185,8 +184,8 @@ ROS_DOMAIN_ID=1 ros2 topic list
 
 预测：B 能看到 `/lowstate` 吗？为什么？
 
-再看一个更常见的：把 `scripts/env.sh` 里 `CYCLONEDDS_URI` 指向的网卡改错，或者直接用
-`--iface` 指定 Wi-Fi 网卡。现象是 `ros2 topic list` 空、`00_probe.py` 收不到。
+再看一个更常见的：把 `scripts/env.sh` 里 `CYCLONEDDS_URI` 指向的网卡改错（比如指向 Wi-Fi）。
+现象是 `ros2 topic list` 空、`00_probe.py` 收不到。
 **问题不在代码，在 DDS 找不到对方。**
 
 ---
@@ -229,7 +228,6 @@ python3 02_loco.py --demo
 | `start` | 500 | `Start()` | 进入主运控，后面才能 `Move` / 手臂动作 | 低 |
 | `squat2standup` | 706 | `Squat2StandUp()` | 从蹲姿站起 | 低 |
 | `lie2standup` | 702 | `Lie2StandUp()` | 从仰躺站起，要求仰面、硬平地 | 高 |
-| `standup2squat` | 706 | `StandUp2Squat()` | 上游和 `squat2standup` 共用 706 | 低 |
 | `high_stand` / `low_stand` | — | `SetStandHeight()` | 站到最高 / 最低 | 低 |
 | `wave_hand` / `wave_hand_turn` | — | `SetTaskId(0/1)` | 原地挥手 / 转身挥手 | 低 / 中 |
 | `shake_hand_start` / `_end` | — | `SetTaskId(2/3)` | 开始 / 结束握手 | 中 |
@@ -323,11 +321,11 @@ G1 和 Go2 是同一条 DDS 话题、同一个 `unitree_go/SportModeState` 类�
 ### 发一条速度
 
 ```bash
-python3 02b_high_level_move.py --action twist --vx 0.2 --duration 2
+python3 02b_high_level_move.py --action walk --vx 0.2 --duration 2
 python3 02b_high_level_move.py --action circle --vx 0.2 --wz 0.3 --duration 4
 ```
 
-脚本按 20 Hz 重发，同时把"指令值 / 实测值"并排打出来 —— 对不上就是没在执行。
+脚本按 20 Hz 重发，`--action probe` 能随时对照指令值和实测值 —— 对不上就是没在执行。
 
 ### 断流实验（这一节最值钱的两分钟）
 
@@ -344,7 +342,7 @@ Go2 正好相反 —— `Move()` 没有 duration，断流几百毫秒固件自�
 ### 闭环到一个坐标（SDK 里没有这个接口，自己写）
 
 ```bash
-python3 02b_high_level_move.py --action goto --x 1.0 --y 0.5 --timeout 20
+python3 02b_high_level_move.py --action goto --x 1.0 --y 0.5
 ```
 
 核心是"世界系误差 → 机体系误差"那一行旋转，少写它机器人会绕你画弧：
@@ -373,7 +371,6 @@ vx, wz = kp * ex_b, kyaw * math.atan2(ey_b, ex_b)
 python3 03_arm_actions.py --list
 python3 03_arm_actions.py --action "high wave"
 python3 03_arm_actions.py --action "heart"
-python3 03_arm_actions.py --id 27
 python3 03_arm_actions.py --demo
 ```
 
@@ -398,8 +395,8 @@ python3 03_arm_actions.py --demo
 | `high wave` | 26 | 高举挥手 | 否 | 低 |
 | `shake hand` | 27 | 握手 | 是 | 中 |
 
-- 名字必须和 `action_map` 完全一致（含空格、连字符）；用 `--list` 最稳。
-- 保持型动作做完不会自动收回，脚本默认补一条 `99 release arm`；想保持就加 `--hold`。
+- 名字必须和 SDK 自带的 `action_map` 完全一致（含空格、连字符）；用 `--list` 最稳。
+- 保持型动作做完不会自动收回，脚本会自动补一条 `99 release arm` 收尾。
 - 手臂动作只在 **FSM 500 / 501 / 801** 下可用（否则返回 `7404`）。脚本会先用 `GetFsmId()` 检查，
   不在范围就提示先跑 `02_loco.py --action start`。
 - `7400` 是 `rt/armsdk` 被别的进程占用；`7401` 是手臂正持有上一个动作，先发 99 或重复同一动作。
@@ -413,7 +410,6 @@ python3 04_audio_led.py --get
 python3 04_audio_led.py --volume 80
 python3 04_audio_led.py --tts "大家好，我是 G1"
 python3 04_audio_led.py --led 0 128 255
-python3 04_audio_led.py --wav path/to/test.wav
 python3 04_audio_led.py --demo
 ```
 
@@ -431,9 +427,8 @@ G1 的语音服务（`rt/api/voice/request`）：
 几个必须讲清楚的点：
 
 - TTS 是**机器人自己念**，不是播放你电脑上的音频；
-- 播放 wav 只接受 **16 kHz / 单声道 / 16-bit PCM**。格式不对不会报错，只会没声音，
-  所以脚本先解析 wav 头再发；
-- 转换命令：`ffmpeg -i in.wav -ar 16000 -ac 1 -sample_fmt s16 out.wav`；
+- 想播自己的 wav，用 `PlayStream`：只接受 **16 kHz / 单声道 / 16-bit PCM**，格式不对只会没声音；
+  转换：`ffmpeg -i in.wav -ar 16000 -ac 1 -sample_fmt s16 out.wav`；
 - 读源码时会看到上游 `TtsMaker` 的 `self.tts_index += self.tts_index` 是个自乘 bug，
   导致 index 恒为 0。不影响本课，但值得指出来。
 
@@ -445,7 +440,6 @@ G1 的语音服务（`rt/api/voice/request`）：
 python3 05_joint_monitor.py --seconds 10
 python3 05_joint_monitor.py --joint 3
 python3 05_joint_monitor.py --joint L_knee
-python3 05_joint_monitor.py --csv out/joints.csv --seconds 60
 ```
 
 一帧 `LowState` 里最重要的是 `motor_state[35]`：
@@ -494,19 +488,35 @@ ros2 topic hz /livox/lidar
 python3 08_lidar.py --seconds 20
 ```
 
-每秒一行：点数、最近距离、远近比例。拿一块纸板靠近机器人头部，看"最近距离"变小。
-这里能顺便讲清一件事：**传感器 → 驱动 → topic → 你的程序**，驱动不起来，传感器再好也读不到。
+**看点云：RViz 窗口**（launch 一跑就自动弹出）。给学生两分钟自己玩：
 
-**深度相机**：相机用 USB 插在机器人的开发计算单元上，不走 DDS 网络，所以要到那台电脑上运行：
+- 拖动 = 旋转视角，滚轮 = 缩放，中间那团点就是机器人"看到的"房间；
+- 左侧 Displays 面板里 `PointCloud2` 前的勾就是点云开关，双击能改尺寸（Size 放大到 3 看得更清楚）；
+- 走到机器人面前挥挥手，点云里能看到自己 —— 这比任何讲解都直观。
+
+终端 B 里 `08_lidar.py` 是文字版：每秒一行点数和最近距离，拿一块纸板靠近机器人头部，
+看"最近距离"变小。这里能顺便讲清一件事：**传感器 → 驱动 → topic → 你的程序**，驱动不起来，传感器再好也读不到。
+
+**看画面：官方查看器 `realsense-viewer`**。相机用 USB 插在机器人的开发计算单元上，
+不走 DDS 网络，所以要 ssh 到那台电脑上运行（需要装好 librealsense）：
 
 ```bash
-scp 09_depth_camera.py <用户名>@<开发计算单元 IP>:~/     # 地址以现场标注为准
-ssh <用户名>@<开发计算单元 IP>
+ssh <用户名>@<开发计算单元 IP>        # 地址以现场标注为准
+realsense-viewer                     # 官方工具：左边彩色、右边深度，实时画面
+```
+
+打开左下角的 Stereo Module 和 RGB Camera 开关就有实时画面；深度画面里走近的东西会变亮。
+这是 Intel 官方查看器，学生看到的是"相机真的在工作"，一行代码都不用写。
+
+想看代码怎么读相机，再跑课程脚本（官方 SDK 写法，帧率 + 画面中心距离 + 存一张彩色图）：
+
+```bash
+scp 09_depth_camera.py <用户名>@<开发计算单元 IP>:~/
 python3 09_depth_camera.py
 ```
 
-打印实际帧率和画面中心的距离，并保存一张彩色图。手在镜头前前后移动，看距离跟着变。
-这里正好讲清一件事：**不是所有传感器的数据都在网络上**，接在哪台电脑上，就要在哪台电脑上读。
+手在镜头前前后移动，看距离跟着变。这里正好讲清一件事：**不是所有传感器的数据都在网络上**，
+接在哪台电脑上，就要在哪台电脑上读。
 
 ---
 
@@ -563,7 +573,7 @@ python3 07_demo_show.py --yes
 
 ## 真机演示流程（教师用）
 
-上课前先按 [真机核对清单](docs/real_robot_checklist.md) 过一遍，把"实测"列填掉。
+上课前把下面的核对表过一遍：
 
 课前：
 
@@ -619,7 +629,7 @@ python3 07_demo_show.py --yes
 - 报错行号就是真实调用点，不用在封装层里追；
 - 想抄到自己的项目里，复制一个文件就能跑。
 
-等他们把这 8 个文件跑熟，再去配套的 `unitree-robotics-lab` 里看 `common/` 为什么要封装，
+等他们把这 11 个文件跑熟，再去配套的 `unitree-robotics-lab` 里看 `common/` 为什么要封装，
 才知道封装解决了什么问题。
 
 ---
@@ -632,7 +642,7 @@ python3 07_demo_show.py --yes
 - 每个注释过的文件开头都有 `课程阅读副本` 横幅，写明上游地址、固定版本、对应哪一节；
 - 运行时 import 的就是仓库里这份，所以点击 `ChannelSubscriber`、`LocoClient`、`LowState_`，
   跳到的是你正在跑的代码；
-- 完整对照表见 [源码阅读地图](docs/sdk_reading_map.md)，来源和许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+- 来源和许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 最短的一条阅读路线（10 分钟）：
 
@@ -660,7 +670,6 @@ python3 07_demo_show.py --yes
 | 手臂 code=7401 | 手臂正持有上一个动作 | 先发 `release arm`（99），或重复同一动作 |
 | LED / 音量 code=3204 | 参数超范围 | 音量 0–100；RGB 0–255 |
 | TTS 没声音 | 音量 0 / App 占用 / 服务忙 | `--volume 80`；关 App；重试 |
-| wav 没声音 | 不是 16 kHz / mono / 16-bit | `ffmpeg -ar 16000 -ac 1 -sample_fmt s16` |
 | 频率比 `ros2 topic hz` 低很多 | 回调太重 / 队列积压 | 把解析移出回调；只存最新一帧 |
 | 关节温度全 0 | 机器人待机 / 未上电 | 先 `start`；确认机器人已使能 |
 

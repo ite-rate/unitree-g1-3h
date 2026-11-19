@@ -131,7 +131,7 @@ wz = kyaw * math.atan2(ey_b, ex_b)      # 朝误差方向转
 | 分钟 | 做什么 | 命令 |
 |---|---|---|
 | 0–3 | 只读，确认反馈通 | `--action probe` |
-| 3–8 | 发一条速度，20 Hz 持续 2 秒 | `--action twist --vx 0.2 --duration 2` |
+| 3–8 | 发一条速度，20 Hz 持续 2 秒 | `--action walk --vx 0.2 --duration 2` |
 | 8–12 | 断流实验：只发一条 duration=3，看它走完 | `--action dropout --vx 0.2 --duration 3` |
 | 12–17 | 前进 + 转向画圆 | `--action circle --vx 0.2 --wz 0.3 --duration 4` |
 | 17–20 | 闭环到点 | `--action goto --x 1.0 --y 0.5` |
@@ -141,7 +141,7 @@ wz = kyaw * math.atan2(ey_b, ex_b)      # 朝误差方向转
 
 ## 8. 作业
 
-1. 把 `action_goto` 的 `kp` 从 0.8 改成 3.0，跑一次，解释为什么开始抖。
+1. 把 `goto` 循环里的速度系数 `0.8`（kp）改成 3.0，跑一次，解释为什么开始抖。
 2. 删掉 `ex_b/ey_b` 那两行的旋转（直接用 `ex, ey`），跑一次，描述轨迹形状，说清原因。
 3. 加一个"到点后用 `AudioClient` 说一句'到了'"的收尾（接第 4 节）。
 4. 把 `goto` 改成走三个点 A→B→C 的折线，中途不停车。想想为什么中间那次不必停车。

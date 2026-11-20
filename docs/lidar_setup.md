@@ -54,18 +54,71 @@ cd ~/ws_livox/src/livox_ros_driver2
 
 ## 3. 改配置：告诉驱动雷达在哪、数据发给谁（一次）
 
-MID-360S 用的配置文件是 `config/MID360s_config.json`（注意不是 `MID360_config.json`）。改两处：
+驱动要把雷达的数据收下来，得先知道两件事：**雷达自己的 IP**（数据从哪来）、
+**你笔记本的 IP**（数据发给谁）。两件事写在同一个配置文件里，改两个值就行。
 
-```jsonc
-"host_net_info" : [ { "host_ip" : "192.168.123.222", ... } ],   // 笔记本 IP
-"lidar_configs" : [ { "ip" : "192.168.123.120", ... } ]          // 雷达 IP
+MID-360S 用的文件是 `config/MID360s_config.json`（注意不是 `MID360_config.json`，
+那是老款 MID-360 的，结构不一样）。
+
+### 第 1 步：先拿到两个 IP
+
+```bash
+ip addr | grep 192.168.123      # 笔记本有线网卡的 IP，比如 192.168.123.222
+# 雷达 IP：第 0 步 ping 通的那个，比如 192.168.123.120
 ```
+
+### 第 2 步：打开文件，只改两个 IP
 
 ```bash
 cd ~/ws_livox/src/livox_ros_driver2
 nano config/MID360s_config.json
-./build.sh humble          # 配置文件是编译时拷进 install 的，改完要重新编译一次
 ```
+
+文件全貌如下，**只改标了 ★ 的两行，其他一律不动**（出厂默认是 192.168.1.5 / 192.168.1.12）：
+
+```jsonc
+{
+  "lidar_summary_info" : { "lidar_type": 8 },        // 雷达型号编号，不动
+  "Mid360s" : {
+    "lidar_net_info" : {                             // 雷达自己用的端口，不动
+      "cmd_data_port": 56100, "push_msg_port": 56200,
+      "point_data_port": 56300, "imu_data_port": 56400, "log_data_port": 56500
+    },
+    "host_net_info" : [                              // —— 你这台电脑 ——
+      {
+        "host_ip": "192.168.123.222",                // ★ 改成笔记本的 IP（ip addr 查的）
+        "cmd_data_port": 56101, "push_msg_port": 56201,
+        "point_data_port": 56301, "imu_data_port": 56401, "log_data_port": 56501
+      }                                              //   下面这些端口不用改
+    ]
+  },
+  "lidar_configs" : [                                // —— 雷达 ——
+    {
+      "ip": "192.168.123.120",                       // ★ 改成雷达的 IP（ping 通的那个）
+      "pcl_data_type": 1,                            //   点云格式，不用改
+      "pattern_mode": 0,                             //   扫描模式，不用改
+      "extrinsic_parameter": {                       //   雷达外参（装在哪、朝向），
+        "roll": 0.0, "pitch": 0.0, "yaw": 0.0,       //   本课只用距离，不用动；
+        "x": 0, "y": 0, "z": 0                       //   做建图时才需要标定
+      }
+    }
+  ]
+}
+```
+
+改完保存退出（nano：`Ctrl+O` 回车，`Ctrl+X`）。
+
+两个 IP 都在同网段 `192.168.123.x`。写错了的现象很明确：驱动起来了、
+`ros2 topic list` 也有 topic，但 `ros2 topic hz /livox/lidar` 一直是 0 ——
+雷达根本没把数据发给你这台电脑。
+
+### 第 3 步：重新编译一次
+
+```bash
+./build.sh humble
+```
+
+配置文件是**编译时**拷进 `install/` 的，改完不重新编译，跑的还是旧 IP。
 
 ## 4. 启动驱动（每次上课）
 
